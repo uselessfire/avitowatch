@@ -1,7 +1,7 @@
 #!/usr/bin/env python2
 # -*- coding: utf-8 -*-
 
-# version: 0.9.2 Beta Public
+# version: 0.10 Beta Public
 # Copyright 2015 Anton Karasev
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,12 +21,12 @@ import sys
 import os
 import urllib
 import time
+import datetime
 import smtplib
 import threading
 import signal
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from email.mime.image import MIMEImage
 from time import sleep
 
 internet_lock = threading.Lock()
@@ -59,7 +59,7 @@ class Item(object):
         self.date = item.find('div', {'class': 'date c-2'}).get_text(strip=True)
 
         self.old_price = int()
-        self.image_urls, self.image_files = (list() for _ in xrange(0, 2))
+        self.image_urls = list()
         self.images_html, self.address, self.city, self.seller_name, self.seller_type, self.description \
             = (unicode() for _ in xrange(0, 6))
 
@@ -67,8 +67,6 @@ class Item(object):
     __str__ = lambda self: self.name
 
     def grep_advanced(self):
-        # import pdb; pdb.set_trace()
-        # print 'Opening item\'s URL %s' % self.link
         try:
             bs_item_page = bs4.BeautifulSoup(urllib.urlopen(self.link).read())
         except IOError:
@@ -93,16 +91,16 @@ class Item(object):
             self.address = bs_item_page.find('span', {'id': 'toggle_map'}).get_text()[1:].strip()
             return True
 
-    def download_images(self):
-        self.image_files = list()
-        for url in self.image_urls:
-            self.image_files.append(urllib.urlretrieve(url)[0])
-        return self.image_files
-
-    def delete_images(self):
-        for image in self.image_files:
-            os.remove(image)
-            del self.image_files[0]
+#    def download_images(self):
+#        self.image_files = list()
+#        for url in self.image_urls:
+#            self.image_files.append(urllib.urlretrieve(url)[0])
+#        return self.image_files
+#
+#    def delete_images(self):
+#        for image in self.image_files:
+#            os.remove(image)
+#            del self.image_files[0]
 
     def send_or_not(self):
         if self.config['min_price'] <= self.price <= self.config['max_price'] and\
@@ -119,6 +117,7 @@ def grep_items(config, url=None, page=1):
         url = config['main_url']
     try:
         internet_lock.acquire()  # авито не любит одновременные запросы
+        sleep(1)
         html = urllib.urlopen(url).read()
         internet_lock.release()
         if not html:
@@ -136,7 +135,9 @@ def grep_items(config, url=None, page=1):
             if next_page:
                 items += grep_items(config, urllib.basejoin(config['site'], next_page['href']), page + 1)
     if page == 1:
-        print(u'[%s] Found %i results' % (config['configfile'], len(items)))
+        config['last_len'] = len(items)
+        config['last_check'] = datetime.datetime.now()
+        print_status()
     return items
 
 
@@ -168,7 +169,6 @@ class Email(object):
          item.seller_name, item.seller_type, item.city, item.address, item.images_html)
 
     def create_msg(self, item):
-        print 'Email.create_msg'
         self.msg = MIMEMultipart()
         if item.old_price:
             self.msg['Subject'] = self.create_price_subject(item)
@@ -176,25 +176,25 @@ class Email(object):
         else:
             self.msg['Subject'] = self.create_new_subject(item)
             self.msg.attach(MIMEText(self.create_new_body(item), 'html', _charset='utf-8'))
-        #            _file('test.html', self.create_new_body(item))
+        #            __file('test.html', self.create_new_body(item))
 
-    def attach_images(self, images):
-        # не используется (изображения теперь в виде ссылок в HTML-письме, а не в виде приложенных файлов)
-        for image in images:
-            fp = open(image, 'rb')
-            self.msg.attach(MIMEImage(fp.read()))
-            fp.close()
+#    def attach_images(self, images):
+#        # не используется (изображения теперь в виде ссылок в HTML-письме, а не в виде приложенных файлов)
+#        for image in images:
+#            fp = open(image, 'rb')
+#            self.msg.attach(MIMEImage(fp.read()))
+#            fp.close()
 
     def send(self):
         self.msg['From'] = self.config['me']
         self.msg['To'] = self.config['to']
         internet_lock.acquire()
-        sleep(1)
         if self.config['ssl']:
             self.smtp = smtplib.SMTP_SSL(self.config['server'], self.config['port'])
         else:
             self.smtp = smtplib.SMTP(self.config['server'], self.config['port'])
-        print self.smtp.login(self.config['login'], self.config['password'])
+        print u'\x1b[2K\r[%s %s: %s]' % (datetime.datetime.now().strftime("%H:%M:%S"), self.config['configfile'],
+                                         self.smtp.login(self.config['login'], self.config['password'])[1])
         code = self.smtp.sendmail(self.config['me'], self.config['to'], self.msg.as_string())
         self.smtp.quit()
         internet_lock.release()
@@ -221,6 +221,17 @@ def check_new(config):
     return delta
 
 
+def print_status():
+    to_print = unicode()
+    for config in configs:
+        if config['last_len']:
+            to_print += u'[%s %s: %i results]   ' % (config['last_check'].strftime("%H:%M:%S"), config['configfile'],
+                                                     config['last_len'])
+    to_print += u'\r'
+    sys.stdout.write(to_print)
+    sys.stdout.flush()
+
+
 def start_watcher(config):
 
     url = urllib.basejoin(config['site'], config['region'] +
@@ -233,23 +244,29 @@ def start_watcher(config):
             if item.send_or_not():
                 email = Email(config)
                 if email.grep_advanced(item):
-                    print email.send()
-                    print u'отправлено письмо с %i фото: %s' % (len(item.image_urls), item.link)
-        time.sleep(config['timer'])
+                    email.send()
+                    print u'\x1b[2K\r[%s %s: Email sent with %i photos: %s ]' %\
+                          (datetime.datetime.now().strftime("%H:%M:%S"),
+                           config['configfile'],
+                           len(item.image_urls),
+                           item.link)
 
-sysexit = lambda a, b: sys.exit()  # патамушта signal.signal подаёт 2 аргумента, а sys.exit принимает только один
+        time.sleep(config['timer'])
 
 
 def main():
+    global configs
     configs = list()
     for configfile in sys.argv[1:]:
         configs.append(dict())
         configs[-1]['configfile'] = configfile
+        configs[-1]['last_len'] = None
+        configs[-1]['last_check'] = None
         execfile(configfile, configs[-1])
         configs[-1]['thread'] = threading.Thread(None, start_watcher, configfile, (configs[-1],))
         configs[-1]['thread'].setDaemon(True)
         configs[-1]['thread'].start()
-    signal.signal(signal.SIGINT, sysexit)
+    signal.signal(signal.SIGINT, lambda _, __: sys.exit())
     signal.pause()
     return 0
 
