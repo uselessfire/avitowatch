@@ -26,13 +26,13 @@ def __file(filename, text=None, ini=False):
             fp.close()
             return text.decode('utf8')
         else:
-            return _file(filename, str())
+            return __file(filename, str())
     else:
         if ini:
             if os.path.exists(filename):
-                return _file(filename)
+                return __file(filename)
             else:
-                return _file(filename, text)
+                return __file(filename, text)
         else:
             filename, text = unicode(filename), unicode(text)
             folder = os.path.dirname(filename)

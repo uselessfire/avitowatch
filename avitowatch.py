@@ -1,5 +1,6 @@
 #!/usr/bin/env python2
 # -*- coding: utf-8 -*-
+
 # version: 0.9.2 Beta Public
 # Copyright 2015 Anton Karasev
 #
@@ -35,7 +36,7 @@ coreDir = os.path.split(core)[0]
 
 sys.path.insert(1, coreDir + '/libs')
 import bs4
-from _file import __file
+from __file import __file
 
 reload(sys).setdefaultencoding('utf8')
 
